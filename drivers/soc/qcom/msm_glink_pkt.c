@@ -404,6 +404,11 @@ ssize_t glink_pkt_read(struct file *file,
 	ret = wait_event_interruptible(devp->ch_read_wait_queue,
 				     !devp->handle || devp->in_reset ||
 				     glink_pkt_read_avail(devp));
+	if (devp->in_reset) {
+		GLINK_PKT_ERR("%s: notifying reset for glink_pkt_dev id:%d\n",
+			__func__, devp->i);
+		return -ENETRESET;
+	}
 	if (!devp->handle) {
 		GLINK_PKT_ERR("%s on a closed glink_pkt_dev id:%d\n",
 			__func__, devp->i);
@@ -812,6 +817,8 @@ static int glink_pkt_init_add_device(struct glink_pkt_dev *devp, int i)
 	spin_lock_init(&devp->pa_spinlock);
 	INIT_LIST_HEAD(&devp->pkt_list);
 	spin_lock_init(&devp->pkt_list_lock);
+	wakeup_source_init(&devp->pa_ws, devp->dev_name);
+	INIT_WORK(&devp->packet_arrival_work, packet_arrival_worker);
 
 	cdev_init(&devp->cdev, &glink_pkt_fops);
 	devp->cdev.owner = THIS_MODULE;
