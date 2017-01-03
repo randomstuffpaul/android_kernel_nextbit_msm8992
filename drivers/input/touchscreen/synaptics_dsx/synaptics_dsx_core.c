@@ -4111,11 +4111,28 @@ static int synaptics_rmi4_remove(struct platform_device *pdev)
 }
 
 #if defined(CONFIG_FB)
+static bool is_enable_touch(struct fb_event *evdata)
+{
+	int *blank;
+
+	blank = evdata->data;
+	switch (*blank) {
+	case FB_BLANK_UNBLANK:
+	case FB_BLANK_NORMAL:
+	case FB_BLANK_VSYNC_SUSPEND:
+	case FB_BLANK_HSYNC_SUSPEND:
+		return true;
+
+	case FB_BLANK_POWERDOWN:
+	default:
+		return false;
+	}
+}
+
 static int fb_notifier_callback(struct notifier_block *self,
 				unsigned long event, void *data)
 {
 	struct fb_event *evdata = data;
-	int *blank;
 	struct synaptics_rmi4_data *rmi4_data =
 		container_of(self, struct synaptics_rmi4_data, fb_notif);
 
@@ -4123,11 +4140,10 @@ static int fb_notifier_callback(struct notifier_block *self,
 		if (event == FB_EARLY_EVENT_BLANK)
 			synaptics_secure_touch_stop(rmi4_data, 0);
 		else if (event == FB_EVENT_BLANK) {
-			blank = evdata->data;
-			if (*blank == FB_BLANK_UNBLANK)
+			if (is_enable_touch(evdata))
 				synaptics_rmi4_resume(
 					&(rmi4_data->input_dev->dev));
-			else if (*blank == FB_BLANK_POWERDOWN)
+			else
 				synaptics_rmi4_suspend(
 					&(rmi4_data->input_dev->dev));
 		}
