@@ -269,6 +269,12 @@ struct synaptics_rmi4_data {
 	unsigned short f01_cmd_base_addr;
 	unsigned short f01_ctrl_base_addr;
 	unsigned short f01_data_base_addr;
+/*  NBQ - AlbertWu - [NBQ-74] - [Touch] Add touch panel get version command. */
+	unsigned short f34_query_base_addr;
+	unsigned short f34_cmd_base_addr;
+	unsigned short f34_ctrl_base_addr;
+	unsigned short f34_data_base_addr;
+/* end  NBQ - AlbertWu - [NBQ-74] */
 	unsigned int firmware_id;
 	int irq;
 	int sensor_max_x;

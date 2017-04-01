@@ -1419,7 +1419,8 @@ static irqreturn_t synaptics_rmi4_irq(int irq, void *data)
 	if (IRQ_HANDLED == synaptics_filter_interrupt(data))
 		return IRQ_HANDLED;
 
-	synaptics_rmi4_sensor_report(rmi4_data);
+	if (!rmi4_data->touch_stopped)
+		synaptics_rmi4_sensor_report(rmi4_data);
 
 	return IRQ_HANDLED;
 }
@@ -2109,7 +2110,26 @@ error_exit:
 
 	return retval;
 }
+/*  NBQ - AlbertWu - [NBQ-74] - [Touch] Add touch panel get version command. */
+static int synaptics_rmi4_f34_init(struct synaptics_rmi4_data *rmi4_data,
+		struct synaptics_rmi4_fn *fhandler,
+		struct synaptics_rmi4_fn_desc *fd,
+		unsigned int intr_count)
+{
+	fhandler->fn_number = fd->fn_number;
+	fhandler->num_of_data_sources = fd->intr_src_count;
+	fhandler->data = NULL;
+	fhandler->extra = NULL;
 
+	synaptics_rmi4_set_intr_mask(fhandler, fd, intr_count);
+
+	rmi4_data->f34_query_base_addr = fd->query_base_addr;
+	rmi4_data->f34_ctrl_base_addr = fd->ctrl_base_addr;
+	rmi4_data->f34_data_base_addr = fd->data_base_addr;
+	rmi4_data->f34_cmd_base_addr = fd->cmd_base_addr;
+	return 0;
+}
+/* end  NBQ - AlbertWu - [NBQ-74] */
 static void synaptics_rmi4_empty_fn_list(struct synaptics_rmi4_data *rmi4_data)
 {
 	struct synaptics_rmi4_fn *fhandler;
@@ -2431,6 +2451,26 @@ rescan_pdt:
 #endif
 				}
 				break;
+/*  NBQ - AlbertWu - [NBQ-74] - [Touch] Add touch panel get version command. */
+			case SYNAPTICS_RMI4_F34:
+				if (rmi_fd.intr_src_count == 0)
+					break;
+
+				retval = synaptics_rmi4_alloc_fh(&fhandler,
+						&rmi_fd, page_number);
+				if (retval < 0) {
+					dev_err(rmi4_data->pdev->dev.parent,
+							"%s: Failed to alloc for F%d\n",
+							__func__,
+							rmi_fd.fn_number);
+					return retval;
+				}
+				retval = synaptics_rmi4_f34_init(rmi4_data,
+						fhandler, &rmi_fd, intr_count);
+				if (retval < 0)
+					return retval;
+				break;
+/* end  NBQ - AlbertWu - [NBQ-74] */
 			}
 
 			/* Accumulate the interrupt count */
@@ -2560,11 +2600,23 @@ static void synaptics_rmi4_set_params(struct synaptics_rmi4_data *rmi4_data)
 	rmi = &(rmi4_data->rmi4_mod_info);
 
 	if (bdata->disp_maxx && bdata->disp_maxy) {
+/*  NBQ - EricHsieh - [06-23] - [Touch] Synaptics touch driver porting */
+		input_set_abs_params(rmi4_data->input_dev, ABS_X, 0,
+				bdata->disp_maxx, 0, 0);
+		input_set_abs_params(rmi4_data->input_dev, ABS_Y, 0,
+				bdata->disp_maxy, 0, 0);
+/* end  NBQ - EricHsieh - [06-23] */
 		input_set_abs_params(rmi4_data->input_dev, ABS_MT_POSITION_X,
 				0, bdata->disp_maxx, 0, 0);
 		input_set_abs_params(rmi4_data->input_dev, ABS_MT_POSITION_Y,
 				0, bdata->disp_maxy, 0, 0);
 	} else {
+/*  NBQ - EricHsieh - [06-23] - [Touch] Synaptics touch driver porting */
+		input_set_abs_params(rmi4_data->input_dev, ABS_X, 0,
+				rmi4_data->sensor_max_x, 0, 0);
+		input_set_abs_params(rmi4_data->input_dev, ABS_Y, 0,
+				rmi4_data->sensor_max_y, 0, 0);
+/* end  NBQ - EricHsieh - [06-23] */
 		input_set_abs_params(rmi4_data->input_dev, ABS_MT_POSITION_X,
 				0, rmi4_data->sensor_max_x, 0, 0);
 		input_set_abs_params(rmi4_data->input_dev, ABS_MT_POSITION_Y,
@@ -3086,6 +3138,31 @@ static int synaptics_dsx_gpio_configure(struct synaptics_rmi4_data *rmi4_data,
 			rmi4_data->hw_if->board_data;
 
 	if (on) {
+/*FIH, Hubert, 20150818, porting touch (enable_gpio) {*/
+		if (gpio_is_valid(bdata->enable_gpio)) {
+			/* configure touchscreen irq gpio */
+			retval = gpio_request(bdata->enable_gpio,
+				"rmi4_enable_gpio");
+			if (retval) {
+				dev_err(rmi4_data->pdev->dev.parent,
+					"unable to request gpio [%d]\n",
+					bdata->enable_gpio);
+				goto err_enable_gpio_req;
+			}
+			retval = gpio_direction_output(bdata->enable_gpio, 1);
+			if (retval) {
+				dev_err(rmi4_data->pdev->dev.parent,
+					"unable to set dir for gpio[%d]\n",
+					bdata->enable_gpio);
+				goto err_enable_gpio_dir;
+			}
+		} else {
+			dev_err(rmi4_data->pdev->dev.parent,
+				"enable gpio not provided\n");
+			goto err_enable_gpio_req;
+		}
+/*} FIH, Hubert, 20150818, porting touch (enable_gpio)*/
+
 		if (gpio_is_valid(bdata->irq_gpio)) {
 			/* configure touchscreen irq gpio */
 			retval = gpio_request(bdata->irq_gpio,
@@ -3094,7 +3171,9 @@ static int synaptics_dsx_gpio_configure(struct synaptics_rmi4_data *rmi4_data,
 				dev_err(rmi4_data->pdev->dev.parent,
 					"unable to request gpio [%d]\n",
 					bdata->irq_gpio);
-				goto err_irq_gpio_req;
+/*FIH, Hubert, 20150818, porting touch (enable_gpio) {*/
+				goto err_enable_gpio_dir;
+/*} FIH, Hubert, 20150818, porting touch (enable_gpio)*/
 			}
 			retval = gpio_direction_input(bdata->irq_gpio);
 			if (retval) {
@@ -3106,7 +3185,9 @@ static int synaptics_dsx_gpio_configure(struct synaptics_rmi4_data *rmi4_data,
 		} else {
 			dev_err(rmi4_data->pdev->dev.parent,
 				"irq gpio not provided\n");
-			goto err_irq_gpio_req;
+/*FIH, Hubert, 20150818, porting touch (enable_gpio) {*/
+			goto err_enable_gpio_dir;
+/*} FIH, Hubert, 20150818, porting touch (enable_gpio)*/
 		}
 
 		if (gpio_is_valid(bdata->reset_gpio)) {
@@ -3153,6 +3234,13 @@ static int synaptics_dsx_gpio_configure(struct synaptics_rmi4_data *rmi4_data,
 				}
 				gpio_free(bdata->reset_gpio);
 			}
+/*FIH, Hubert, 20150925, gpio_free the enable_gpio in suspend mode {*/
+			if (gpio_is_valid(bdata->enable_gpio))
+			{
+				gpio_direction_output(bdata->enable_gpio, 0);
+				gpio_free(bdata->enable_gpio);
+			}
+/*} FIH, Hubert, 20150925, gpio_free the enable_gpio in suspend mode*/
 		}
 
 		return 0;
@@ -3164,7 +3252,12 @@ err_reset_gpio_dir:
 err_irq_gpio_dir:
 	if (gpio_is_valid(bdata->irq_gpio))
 		gpio_free(bdata->irq_gpio);
-err_irq_gpio_req:
+/*FIH, Hubert, 20150818, porting touch (enable_gpio) {*/
+err_enable_gpio_dir:
+	if (gpio_is_valid(bdata->enable_gpio))
+		gpio_free(bdata->enable_gpio);
+err_enable_gpio_req:
+/*} FIH, Hubert, 20150818, porting touch (enable_gpio)*/
 	return retval;
 }
 
@@ -3262,7 +3355,9 @@ static int synaptics_rmi4_reset_device(struct synaptics_rmi4_data *rmi4_data)
 	int temp;
 	unsigned char command = 0x01;
 	struct synaptics_rmi4_exp_fhandler *exp_fhandler;
-
+/*  NBQ - EricHsieh - [06-23] - [Touch] Synaptics touch driver porting */
+	pr_info("%s \r\n",__func__);
+/* end  NBQ - EricHsieh - [06-23] */
 	mutex_lock(&(rmi4_data->rmi4_reset_mutex));
 
 	rmi4_data->touch_stopped = true;
@@ -3597,7 +3692,9 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
 
 		strlcpy(rmi4_data->fw_name, bdata->fw_name, len + 1);
 	}
-
+/*  NBQ - EricHsieh - [06-619] - [Touch] Porting synaptics touch to Android L 1241 */
+	msleep(bdata->init_delay_ms);
+/* end  NBQ - EricHsieh - [06-619] */
 	retval = synaptics_rmi4_set_input_dev(rmi4_data);
 	if (retval < 0) {
 		dev_err(&pdev->dev,
@@ -4196,6 +4293,10 @@ static int synaptics_rmi4_resume(struct device *dev)
 		if (retval < 0)
 			dev_err(dev, "Failed to put gpios in active state\n");
 	}
+
+/*  NBQ - EricHsieh - [06-619] - [Touch] Porting synaptics touch to Android L 1241 */
+	msleep(rmi4_data->hw_if->board_data->init_delay_ms);
+/* end  NBQ - EricHsieh - [06-619] */
 
 	synaptics_rmi4_sensor_wake(rmi4_data);
 	retval = synaptics_rmi4_reinit_device(rmi4_data);
