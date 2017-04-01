@@ -101,6 +101,10 @@ static int msm8994_auxpcm_rate = 8000;
 
 static struct platform_device *spdev;
 static int ext_us_amp_gpio = -1;
+#ifdef CONFIG_FIH_NBQ_AUDIO
+static int spk_sel_gpio = -1;
+#endif
+
 static int msm8994_spk_control = 1;
 static int msm_slim_0_rx_ch = 1;
 static int msm_slim_0_tx_ch = 1;
@@ -208,6 +212,18 @@ static struct afe_clk_cfg mi2s_tx_clk = {
 	Q6AFE_LPASS_MODE_CLK1_VALID,
 	0,
 };
+
+#ifdef CONFIG_FIH_NBQ_AUDIO
+static struct afe_clk_cfg mi2s_rx_clk = {
+	AFE_API_VERSION_I2S_CONFIG,
+	Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ,
+	Q6AFE_LPASS_OSR_CLK_DISABLE,
+	Q6AFE_LPASS_CLK_SRC_INTERNAL,
+	Q6AFE_LPASS_CLK_ROOT_DEFAULT,
+	Q6AFE_LPASS_MODE_CLK1_VALID,
+	0,
+};
+#endif
 
 static inline int param_is_mask(int p)
 {
@@ -1508,6 +1524,12 @@ static int msm_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 					SNDRV_PCM_HW_PARAM_CHANNELS);
 
 	pr_debug("%s: channel:%d\n", __func__, msm_pri_mi2s_tx_ch);
+
+#ifdef CONFIG_FIH_NBQ_AUDIO
+	param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
+			SNDRV_PCM_FORMAT_S16_LE);
+#endif
+
 	rate->min = rate->max = SAMPLING_RATE_48KHZ;
 	channels->min = channels->max = msm_pri_mi2s_tx_ch;
 	return 0;
@@ -1585,6 +1607,81 @@ static struct snd_soc_ops msm8994_mi2s_be_ops = {
 	.startup = msm8994_mi2s_snd_startup,
 	.shutdown = msm8994_mi2s_snd_shutdown,
 };
+
+#ifdef CONFIG_FIH_NBQ_AUDIO
+static int msm8994_mi2s_rx_snd_startup(struct snd_pcm_substream *substream)
+{
+	int ret = 0;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_card *card = rtd->card;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct msm8994_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
+	struct msm_pinctrl_info *pinctrl_info = &pdata->pinctrl_info;
+
+	gpio_direction_output(spk_sel_gpio, 1);
+
+	pr_debug("%s: substream = %s  stream = %d\n", __func__,
+		substream->name, substream->stream);
+	if (pinctrl_info == NULL) {
+		pr_err("%s: pinctrl_info is NULL\n", __func__);
+		ret = -EINVAL;
+		goto err;
+	}
+	if (pdata->pri_mux != NULL)
+		iowrite32(I2S_PCM_SEL_I2S << I2S_PCM_SEL_OFFSET,
+				pdata->pri_mux);
+	else
+		pr_err("%s: MI2S muxsel addr is NULL\n", __func__);
+	ret = msm_set_pinctrl(pinctrl_info, STATE_MI2S_ACTIVE);
+	if (ret) {
+		pr_err("%s: MI2S TLMM pinctrl set failed with %d\n",
+			__func__, ret);
+		return ret;
+	}
+	mi2s_rx_clk.clk_val1 = Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ;
+	mi2s_rx_clk.clk_set_mode = Q6AFE_LPASS_MODE_CLK1_VALID;
+	ret = afe_set_lpass_clock(AFE_PORT_ID_PRIMARY_MI2S_RX,
+				&mi2s_rx_clk);
+	if (ret < 0) {
+		pr_err("%s: afe lpass clock failed, err:%d\n", __func__, ret);
+		goto err;
+	}
+	ret = snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_CBS_CFS);
+	if (ret < 0)
+		pr_err("%s: set fmt cpu dai failed, err:%d\n", __func__, ret);
+err:
+	return ret;
+}
+
+static void msm8994_mi2s_rx_snd_shutdown(struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_card *card = rtd->card;
+	struct msm8994_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
+	struct msm_pinctrl_info *pinctrl_info = &pdata->pinctrl_info;
+	int ret = 0;
+
+	gpio_direction_output(spk_sel_gpio,0);
+
+	pr_debug("%s: substream = %s  stream = %d\n", __func__,
+		substream->name, substream->stream);
+	mi2s_rx_clk.clk_val1 = Q6AFE_LPASS_IBIT_CLK_DISABLE;
+	mi2s_rx_clk.clk_set_mode = Q6AFE_LPASS_MODE_CLK1_VALID;
+	ret = afe_set_lpass_clock(AFE_PORT_ID_PRIMARY_MI2S_RX,
+				&mi2s_rx_clk);
+	if (ret < 0)
+		pr_err("%s: afe lpass clock failed, err:%d\n", __func__, ret);
+	ret = msm_reset_pinctrl(pinctrl_info, STATE_MI2S_ACTIVE);
+	if (ret)
+		pr_err("%s: Reset pinctrl failed with %d\n",
+			__func__, ret);
+}
+
+static struct snd_soc_ops msm8994_mi2s_rx_be_ops = {
+	.startup = msm8994_mi2s_rx_snd_startup,
+	.shutdown = msm8994_mi2s_rx_snd_shutdown,
+};
+#endif
 
 static int msm_slim_0_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 					    struct snd_pcm_hw_params *params)
@@ -3207,7 +3304,22 @@ static struct snd_soc_dai_link msm8994_common_dai_links[] = {
 		.be_hw_params_fixup = msm_tx_be_hw_params_fixup,
 		.ops = &msm8994_mi2s_be_ops,
 		.ignore_suspend = 1,
+	},
+#ifdef CONFIG_FIH_NBQ_AUDIO
+	{
+		.name = LPASS_BE_PRI_MI2S_RX,
+		.stream_name = "Primary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.0",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_MI2S_RX,
+		.be_hw_params_fixup = msm_tx_be_hw_params_fixup,
+		.ops = &msm8994_mi2s_rx_be_ops,
+		.ignore_suspend = 1,
 	}
+#endif
 };
 
 static struct snd_soc_dai_link msm8994_hdmi_dai_link[] = {
@@ -3521,6 +3633,19 @@ static int msm8994_asoc_machine_probe(struct platform_device *pdev)
 		dev_info(&pdev->dev, "msm8994_prepare_us_euro failed (%d)\n",
 			ret);
 
+#ifdef CONFIG_FIH_NBQ_AUDIO
+	spk_sel_gpio = of_get_named_gpio(pdev->dev.of_node,
+			"fih,spk_sel_gpio", 0);
+	if (spk_sel_gpio >= 0) {
+		if (gpio_request(spk_sel_gpio, "spk_sel_gpio")) {
+			pr_debug("%s %i", __func__, __LINE__);
+		} else {
+			pr_debug("%s %i", __func__, __LINE__);
+			gpio_direction_output(spk_sel_gpio, 0);
+		}
+	}
+#endif
+
 	/* Parse pinctrl info from devicetree */
 	ret = msm_get_pinctrl(pdev);
 	if (!ret) {
@@ -3569,6 +3694,9 @@ static int msm8994_asoc_machine_remove(struct platform_device *pdev)
 
 	gpio_free(pdata->mclk_gpio);
 	gpio_free(pdata->us_euro_gpio);
+#ifdef CONFIG_FIH_NBQ_AUDIO
+	gpio_free(spk_sel_gpio);
+#endif
 
 	msm8994_audio_plug_device_remove(msm8994_liquid_dock_dev);
 
