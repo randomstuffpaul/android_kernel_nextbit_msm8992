@@ -24,11 +24,11 @@
 
 #define DWC3_IDEV_CHG_MAX 1500
 #define DWC3_HVDCP_CHG_MAX 1800
+#define DWC3_FLOA_CHG_MAX  500
 
-#ifdef CONFIG_MACH_FIH_NBQ
+//Enable it for retry check usb type
 #define FIH_CHARGER_DETECT
 #define FIH_USB_RETRY_METHOD
-#endif
 
 /*
  * Module param to override current drawn for DCP charger
