@@ -496,7 +496,6 @@ void dwc3_otg_init_sm(struct dwc3_otg *dotg)
 	if (dwc->vbus_active)
 		set_bit(B_SESS_VLD, &dotg->inputs);
 }
-
 #ifdef FIH_CHARGER_DETECT
 extern void fih_dwc3_start_chg_det(bool start);
 extern int check_charger_detect_status(void);
@@ -589,13 +588,11 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 					break;
 				case DWC3_SDP_CHARGER:
 #ifdef FIH_CHARGER_DETECT
-					if (fih_sdp_retry_count == 0) {
+					if(fih_sdp_retry_count == 0) {
 						fih_dwc3_start_chg_det(false);
 #ifdef FIH_USB_RETRY_METHOD
 						fih_retry_state = 1;
-						queue_delayed_work(system_nrt_wq,
-								&dotg->check_charger_status_work,
-								(msecs_to_jiffies(0)));
+						queue_delayed_work(system_nrt_wq, &dotg->check_charger_status_work, (msecs_to_jiffies(0)));
 #else
 						fih_dwc3_start_chg_det(true);
 #endif
@@ -645,9 +642,7 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 						dbg_event(0xFF, "FLCHG put", 0);
 						pm_runtime_put_sync(phy->dev);
 #ifdef FIH_USB_RETRY_METHOD
-						queue_delayed_work(system_nrt_wq,
-								&dotg->check_charger_status_work,
-								(msecs_to_jiffies(3000)));
+						queue_delayed_work(system_nrt_wq, &dotg->check_charger_status_work, (msecs_to_jiffies(3000)));
 #endif
 						break;
 					}
@@ -778,7 +773,7 @@ int check_charger_retry_count_func(int count, int reset)
 	static int check_charger_retry_count = 0;
 	int ret;
 
-	if (reset)
+	if(reset)
 		check_charger_retry_count = 0;
 
 	ret = check_charger_retry_count;
@@ -789,8 +784,7 @@ int check_charger_retry_count_func(int count, int reset)
 
 static void check_charger_status_work_func(struct work_struct *w)
 {
-	struct dwc3_otg *dotg = container_of(w, struct dwc3_otg,
-			check_charger_status_work.work);
+	struct dwc3_otg *dotg = container_of(w, struct dwc3_otg, check_charger_status_work.work);
 	struct usb_phy *phy = dotg->otg.phy;
 	union power_supply_propval ret = {0,};
 	struct dwc3_charger *charger = dotg->charger;
@@ -815,46 +809,35 @@ static void check_charger_status_work_func(struct work_struct *w)
 	type = ret.intval;
 	retry_count = check_charger_retry_count_func(1, 0);
 
-	if (charger)
-		pr_info("%s: ps: %d, ol: %d, tp: %d, chg->tp: %d, ck_t: %d, ck_s: %d, times: %d\n",
-				__func__, present, online, type,
-				charger->chg_type, charger_detect_type,
-				charger_detect_status, retry_count);
-	else
-		pr_info("%s: ps: %d, ol: %d, tp: %d, ck_t: %d, ck_s: %d, times: %d\n",
-				__func__, present, online, type,
-				charger_detect_type, charger_detect_status,
-				retry_count);
+	if(charger) {
+		pr_info("%s: ps: %d, ol: %d, tp: %d, chg->tp: %d, ck_t: %d, ck_s: %d, times: %d\n"
+				, __func__, present, online, type, charger->chg_type, charger_detect_type, charger_detect_status, retry_count);
+	} else {
+		pr_info("%s: ps: %d, ol: %d, tp: %d, ck_t: %d, ck_s: %d, times: %d\n"
+				, __func__, present, online, type, charger_detect_type, charger_detect_status, retry_count);
+	}
 
-	if (present && (retry_count < 20) && (fih_retry_state == 1)) {
-		if (charger_detect_type == DWC3_FLOATED_CHARGER) {
+	if(present && (retry_count < 20) && (fih_retry_state == 1)) {
+		if(charger_detect_type == DWC3_FLOATED_CHARGER) {
 			dotg->charger_retry_count = 0;
-			queue_delayed_work(system_nrt_wq,
-					&dotg->check_charger_status_work,
-					(msecs_to_jiffies(3000)));
+			queue_delayed_work(system_nrt_wq, &dotg->check_charger_status_work, (msecs_to_jiffies(3000)));
 			fih_dwc3_start_chg_det(false);
 			fih_dwc3_start_chg_det(true);
-			if (charger_detect_type != DWC3_FLOATED_CHARGER &&
-			    charger_detect_type != DWC3_INVALID_CHARGER)
-				pr_info("%s: FLOATED re-detect charger OK\n",
-						__func__);
-			queue_delayed_work(system_nrt_wq,
-					&dotg->check_charger_status_work,
-					(msecs_to_jiffies(3000)));
-		} else if (charger_detect_type == DWC3_SDP_CHARGER) {
-			if (type == POWER_SUPPLY_TYPE_UNKNOWN) {
+			if(charger_detect_type != DWC3_FLOATED_CHARGER && charger_detect_type != DWC3_INVALID_CHARGER) {
+				pr_info("%s: FLOATED re-detect charger OK\n", __func__);
+			}
+			queue_delayed_work(system_nrt_wq, &dotg->check_charger_status_work, (msecs_to_jiffies(3000)));
+		} else if(charger_detect_type == DWC3_SDP_CHARGER) {
+			if(type == POWER_SUPPLY_TYPE_UNKNOWN) {
 				phy->state = OTG_STATE_B_IDLE;
 				fih_dwc3_start_chg_det(false);
 				fih_dwc3_start_chg_det(true);
-				if (charger_detect_type != DWC3_SDP_CHARGER &&
-				    charger_detect_type != DWC3_INVALID_CHARGER)
-					pr_info("%s: SDP re-detect charger OK\n",
-							__func__);
+				if(charger_detect_type != DWC3_SDP_CHARGER && charger_detect_type != DWC3_INVALID_CHARGER) {
+					pr_info("%s: SDP re-detect charger OK\n", __func__);
+				}
 			}
-		} else if (charger_detect_type == DWC3_INVALID_CHARGER) {
-			queue_delayed_work(system_nrt_wq,
-					&dotg->check_charger_status_work,
-					(msecs_to_jiffies(3000)));
+		} else if(charger_detect_type == DWC3_INVALID_CHARGER) {
+			queue_delayed_work(system_nrt_wq, &dotg->check_charger_status_work, (msecs_to_jiffies(3000)));
 			fih_dwc3_start_chg_det(false);
 			fih_dwc3_start_chg_det(true);
 		}
@@ -906,8 +889,7 @@ int dwc3_otg_init(struct dwc3 *dwc)
 	init_completion(&dotg->dwc3_xcvr_vbus_init);
 	INIT_DELAYED_WORK(&dotg->sm_work, dwc3_otg_sm_work);
 #ifdef FIH_USB_RETRY_METHOD
-	INIT_DELAYED_WORK(&dotg->check_charger_status_work,
-			check_charger_status_work_func);
+	INIT_DELAYED_WORK(&dotg->check_charger_status_work, check_charger_status_work_func);
 #endif
 
 	dbg_event(0xFF, "OTGInit get", 0);

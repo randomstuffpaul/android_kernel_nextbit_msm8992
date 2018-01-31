@@ -54,6 +54,8 @@
 #include "debug.h"
 #include "xhci.h"
 
+#define BBOX_USB_FLOAT_CHARGER do {printk("BBox;%s: Floating Charging Mode\n", __func__); printk("BBox::UEC;3::1\n");} while (0);
+
 /* cpu to fix usb interrupt */
 static int cpu_to_affin;
 module_param(cpu_to_affin, int, S_IRUGO|S_IWUSR);
@@ -1438,11 +1440,13 @@ static void dwc3_chg_detect_work(struct work_struct *w)
 			 * Detect floating charger only if propreitary
 			 * charger detection is enabled.
 			 */
-			if (!dcd && prop_chg_detect)
+			if (!dcd && prop_chg_detect) {
 				mdwc->charger.chg_type =
 						DWC3_FLOATED_CHARGER;
-			else
+				BBOX_USB_FLOAT_CHARGER;
+			} else {
 				mdwc->charger.chg_type = DWC3_SDP_CHARGER;
+			}
 			mdwc->chg_state = USB_CHG_STATE_DETECTED;
 			delay = 0;
 		}
@@ -1664,11 +1668,9 @@ EXPORT_SYMBOL(set_charger_type);
 static void dwc3_start_chg_det(struct dwc3_charger *charger, bool start)
 {
 	struct dwc3_msm *mdwc = container_of(charger, struct dwc3_msm, charger);
-
 #ifdef FIH_CHARGER_DETECT
 	fih_dwc3_start_chg_det(start);
 #endif
-
 	if (start == false) {
 		dev_dbg(mdwc->dev, "canceling charging detection work\n");
 		cancel_delayed_work_sync(&mdwc->chg_work);
@@ -2503,7 +2505,6 @@ static int dwc3_msm_power_get_property_usb(struct power_supply *psy,
 	}
 	return 0;
 }
-
 #ifdef FIH_CHARGER_DETECT
 extern int fih_sdp_retry_count;
 #endif
